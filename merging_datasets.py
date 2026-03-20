@@ -61,8 +61,8 @@ def to_canonical(df: pd.DataFrame, source: str) -> pd.DataFrame:
 
 
 # %%
-l_raw = pd.read_csv("heart.csv")
-r_raw = pd.read_csv("heart_statlog_cleveland_hungary_final.csv")
+l_raw = pd.read_csv("./data/heart.csv")
+r_raw = pd.read_csv("./data/heart_statlog_cleveland_hungary_final.csv")
 
 l = to_canonical(l_raw, "heart_csv")
 r = to_canonical(r_raw, "statlog")
@@ -80,5 +80,5 @@ combined.loc[combined['cholesterol'] == 0, 'cholesterol'] = pd.NA
 # %%
 combined.loc[combined['resting bp s'] == 0, 'resting bp s'] = pd.NA
 # %%
-combined.to_csv("combined.csv", index=False)
+combined.to_csv("./data/combined.csv", index=False)
 # %%
