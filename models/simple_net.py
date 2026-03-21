@@ -1,55 +1,22 @@
 # %%
-import sys
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import plotly.express as px
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, classification_report, roc_auc_score, roc_curve
+from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.neural_network import MLPClassifier
 
+from model_run_utils import (
+    persist_run_artifacts,
+    roc_oob_figure,
+    run_permutation_mda,
+    run_shap_proba,
+)
 
-def run_permutation_mda(clf, X_test, y_test, feature_names, *, rng=None, n_repeats=50):
-    """MDA via repeated single-feature shuffles on a fixed test set. Returns long DataFrame (feature, mda)."""
-    if rng is None:
-        rng = np.random.default_rng()
-    X_test = np.asarray(X_test, dtype=float)
-    base = accuracy_score(y_test, clf.predict(X_test))
-    rows = []
-    for _ in range(n_repeats):
-        Xp = X_test.copy()
-        for j, name in enumerate(feature_names):
-            col = Xp[:, j].copy()
-            rng.shuffle(Xp[:, j])
-            rows.append(
-                {"feature": name, "mda": base - accuracy_score(y_test, clf.predict(Xp))}
-            )
-            Xp[:, j] = col
-    return pd.DataFrame(rows)
-
-
-def run_shap_proba(
-    clf, X_background, X_explain, feature_names, *, class_index=1, max_background=100, random_state=42
-):
-    """SHAP for sklearn `predict_proba` (tabular). Returns long DataFrame (sample, feature, shap)."""
-    import shap
-
-    X_bg = np.asarray(X_background, dtype=float)
-    X_ex = np.asarray(X_explain, dtype=float)
-    rng = np.random.default_rng(random_state)
-    if len(X_bg) > max_background:
-        X_bg = X_bg[rng.choice(len(X_bg), max_background, replace=False)]
-    explainer = shap.Explainer(clf.predict_proba, X_bg)
-    exp = explainer(X_ex)
-    vals = exp.values[:, :, class_index]
-    rows = []
-    for i in range(vals.shape[0]):
-        for j, name in enumerate(feature_names):
-            rows.append({"sample": i, "feature": name, "shap": vals[i, j]})
-    return pd.DataFrame(rows)
-
+SCRIPT_STEM = Path(__file__).stem
 
 # %%
 df = pd.read_csv("/home/syntheticdemon/ml/data/combined.csv")
@@ -87,16 +54,7 @@ print(classification_report(y_true, y_pred))
 print("AUC-ROC (OOF on train pool):", round(roc_auc_score(y_true, y_score), 4))
 
 # %%
-fpr, tpr, _ = roc_curve(y_true, y_score)
-auc = roc_auc_score(y_true, y_score)
-roc_fig = px.line(
-    pd.DataFrame({"fpr": fpr, "tpr": tpr}),
-    x="fpr",
-    y="tpr",
-    title=f"ROC — CV on train pool (AUC = {auc:.3f})",
-    labels={"fpr": "False positive rate", "tpr": "True positive rate"},
-)
-roc_fig.add_shape(type="line", x0=0, y0=0, x1=1, y1=1, line=dict(dash="dash", color="gray"))
+roc_fig, _auc = roc_oob_figure(y_true, y_score, title_prefix="ROC — CV on train pool, MLP")
 
 # %%
 imp_final = SimpleImputer(strategy="median")
@@ -138,13 +96,16 @@ fig_shap = px.violin(
 fig_shap.update_xaxes(tickangle=-45)
 
 # %%
-_out = Path(__file__).resolve().parent
-for fig, stem in (roc_fig, "roc_oob"), (fig_mda, "mda_violin"), (fig_shap, "shap_violin"):
-    if "ipykernel" in sys.modules:
-        fig.show()
-    else:
-        p = _out / f"{stem}.html"
-        fig.write_html(p)
-        print(f"Wrote {p}")
+persist_run_artifacts(
+    SCRIPT_STEM,
+    y_true=y_true,
+    y_pred=y_pred,
+    y_score=y_score,
+    roc_fig=roc_fig,
+    fig_mda=fig_mda,
+    fig_shap=fig_shap,
+    mda_df=mda_df,
+    shap_df=shap_df,
+)
 
 # %%
