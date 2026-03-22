@@ -1,38 +1,34 @@
 # %%
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
-from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, roc_auc_score
-from sklearn.model_selection import StratifiedKFold, train_test_split
 from sklearn.neural_network import MLPClassifier
 
 from model_run_utils import (
+    EXPERIMENT,
+    load_combined_xy,
+    make_imputer,
+    make_stratified_kfold,
     persist_run_artifacts,
     roc_oob_figure,
     run_permutation_mda,
     run_shap_proba,
+    split_pool_holdout,
 )
 
 SCRIPT_STEM = Path(__file__).stem
+RNG = EXPERIMENT.random_state
 
 # %%
-df = pd.read_csv("/home/syntheticdemon/ml/data/combined.csv")
-feature_names = df.drop(columns=["target"]).columns.tolist()
-X = df.drop(columns=["target"]).to_numpy(dtype=float)
-y = df["target"].to_numpy()
-
-X_pool, X_holdout, y_pool, y_holdout = train_test_split(
-    X, y, test_size=0.2, stratify=y, random_state=42
-)
-
-skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
+feature_names, X, y = load_combined_xy()
+X_pool, X_holdout, y_pool, y_holdout = split_pool_holdout(X, y)
+skf = make_stratified_kfold()
 y_true, y_pred, y_score = [], [], []
 
 for tr_idx, va_idx in skf.split(X_pool, y_pool):
-    imp = SimpleImputer(strategy="median")
+    imp = make_imputer()
     X_tr = imp.fit_transform(X_pool[tr_idx])
     X_va = imp.transform(X_pool[va_idx])
     y_tr, y_va = y_pool[tr_idx], y_pool[va_idx]
@@ -41,7 +37,7 @@ for tr_idx, va_idx in skf.split(X_pool, y_pool):
         hidden_layer_sizes=(256,),
         activation="logistic",
         max_iter=1500,
-        random_state=42,
+        random_state=RNG,
     )
     clf.fit(X_tr, y_tr)
     y_true.extend(y_va)
@@ -54,44 +50,43 @@ print(classification_report(y_true, y_pred))
 print("AUC-ROC (OOF on train pool):", round(roc_auc_score(y_true, y_score), 4))
 
 # %%
-roc_fig, _auc = roc_oob_figure(y_true, y_score, title_prefix="ROC — CV on train pool, MLP")
+roc_fig, _ = roc_oob_figure(y_true, y_score, title_prefix="ROC — CV on train pool, MLP")
 
 # %%
-imp_final = SimpleImputer(strategy="median")
+imp_final = make_imputer()
 X_pool_i = imp_final.fit_transform(X_pool)
 X_hold_i = imp_final.transform(X_holdout)
 clf_final = MLPClassifier(
     hidden_layer_sizes=(256,),
     activation="logistic",
     max_iter=1500,
-    random_state=42,
+    random_state=RNG,
 )
 clf_final.fit(X_pool_i, y_pool)
 
-mda_df = run_permutation_mda(
-    clf_final, X_hold_i, y_holdout, feature_names, rng=np.random.default_rng(42), n_repeats=50
-)
+mda_df = run_permutation_mda(clf_final, X_hold_i, y_holdout, feature_names)
 fig_mda = px.violin(
     mda_df,
     x="feature",
     y="mda",
     box=True,
     points="all",
-    title="MDA on held-out test (50 shuffle reps / feature)",
+    title=f"MDA on held-out test ({EXPERIMENT.mda_n_repeats} shuffle reps / feature)",
 )
 fig_mda.update_xaxes(tickangle=-45)
 
 # %%
-shap_df = run_shap_proba(
-    clf_final, X_pool_i, X_hold_i, feature_names, class_index=1, max_background=100, random_state=42
-)
+shap_df = run_shap_proba(clf_final, X_pool_i, X_hold_i, feature_names)
 fig_shap = px.violin(
     shap_df,
     x="feature",
     y="shap",
     box=True,
     points=False,
-    title="SHAP values for P(class=1) on holdout (shap.Explainer, background from train pool)",
+    title=(
+        f"SHAP for P(class=1) on holdout (up to {EXPERIMENT.shap_max_explain} rows; "
+        "background from train pool)"
+    ),
 )
 fig_shap.update_xaxes(tickangle=-45)
 

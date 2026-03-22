@@ -1,0 +1,116 @@
+# %%
+from pathlib import Path
+
+import pandas as pd
+import plotly.express as px
+from sklearn.metrics import classification_report, roc_auc_score
+from xgboost import XGBClassifier
+
+from model_run_utils import (
+    EXPERIMENT,
+    load_combined_xy,
+    make_imputer,
+    make_stratified_kfold,
+    persist_run_artifacts,
+    roc_oob_figure,
+    run_permutation_mda,
+    run_shap_proba,
+    split_pool_holdout,
+)
+
+SCRIPT_STEM = Path(__file__).stem
+RNG = EXPERIMENT.random_state
+
+# %%
+feature_names, X, y = load_combined_xy()
+X_pool, X_holdout, y_pool, y_holdout = split_pool_holdout(X, y)
+skf = make_stratified_kfold()
+y_true, y_pred, y_score = [], [], []
+
+for tr_idx, va_idx in skf.split(X_pool, y_pool):
+    imp = make_imputer()
+    X_tr = imp.fit_transform(X_pool[tr_idx])
+    X_va = imp.transform(X_pool[va_idx])
+    y_tr, y_va = y_pool[tr_idx], y_pool[va_idx]
+
+    clf = XGBClassifier(
+        n_estimators=400,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.9,
+        colsample_bytree=0.9,
+        random_state=RNG,
+        n_jobs=-1,
+        eval_metric="logloss",
+        verbosity=0,
+    )
+    clf.fit(X_tr, y_tr)
+    y_true.extend(y_va)
+    y_pred.extend(clf.predict(X_va))
+    y_score.extend(clf.predict_proba(X_va)[:, 1])
+
+# %%
+print("Metrics: stratified CV on train pool (holdout test unused here)")
+print(classification_report(y_true, y_pred))
+print("AUC-ROC (OOF on train pool):", round(roc_auc_score(y_true, y_score), 4))
+
+# %%
+roc_fig, _ = roc_oob_figure(y_true, y_score, title_prefix="ROC — CV on train pool, XGBoost")
+
+# %%
+imp_final = make_imputer()
+X_pool_i = imp_final.fit_transform(X_pool)
+X_hold_i = imp_final.transform(X_holdout)
+clf_final = XGBClassifier(
+    n_estimators=400,
+    max_depth=6,
+    learning_rate=0.05,
+    subsample=0.9,
+    colsample_bytree=0.9,
+    random_state=RNG,
+    n_jobs=-1,
+    eval_metric="logloss",
+    verbosity=0,
+)
+clf_final.fit(X_pool_i, y_pool)
+
+mda_df = run_permutation_mda(clf_final, X_hold_i, y_holdout, feature_names)
+fig_mda = px.violin(
+    mda_df,
+    x="feature",
+    y="mda",
+    box=True,
+    points="all",
+    title=f"MDA on held-out test — XGBoost ({EXPERIMENT.mda_n_repeats} shuffle reps / feature)",
+)
+fig_mda.update_xaxes(tickangle=-45)
+
+# %%
+shap_df = run_shap_proba(clf_final, X_pool_i, X_hold_i, feature_names)
+fig_shap = px.violin(
+    shap_df,
+    x="feature",
+    y="shap",
+    box=True,
+    points=False,
+    title=(
+        f"SHAP for P(class=1) — XGBoost (up to {EXPERIMENT.shap_max_explain} rows; "
+        "background from train pool)"
+    ),
+)
+fig_shap.update_xaxes(tickangle=-45)
+
+# %%
+persist_run_artifacts(
+    SCRIPT_STEM,
+    y_true=y_true,
+    y_pred=y_pred,
+    y_score=y_score,
+    roc_fig=roc_fig,
+    fig_mda=fig_mda,
+    fig_shap=fig_shap,
+    mda_df=mda_df,
+    shap_df=shap_df,
+)
+
+# %%

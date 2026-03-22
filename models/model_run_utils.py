@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -13,12 +14,73 @@ from sklearn.metrics import accuracy_score, classification_report, roc_auc_score
 MODELS_DIR = Path(__file__).resolve().parent
 OUTPUTS_ROOT = MODELS_DIR / "outputs"
 METRICS_ROOT = MODELS_DIR / "performance_metrics"
+DATA_COMBINED_DEFAULT = MODELS_DIR.parent / "data" / "combined.csv"
 
 
-def run_permutation_mda(clf, X_test, y_test, feature_names, *, rng=None, n_repeats=50):
+@dataclass(frozen=True, slots=True)
+class ExperimentConfig:
+    """One shared setup for every `simple_net_*.py`: splits, CV, imputation, MDA/SHAP, RNG seeds."""
+
+    random_state: int = 42
+    test_size: float = 0.2
+    cv_n_splits: int = 5
+    cv_shuffle: bool = True
+    imputer_strategy: str = "median"
+    mda_n_repeats: int = 50
+    shap_max_background: int = 100
+    shap_max_explain: int = 150
+    shap_class_index: int = 1
+
+
+EXPERIMENT = ExperimentConfig()
+
+
+def split_pool_holdout(X, y, cfg: ExperimentConfig = EXPERIMENT):
+    from sklearn.model_selection import train_test_split
+
+    return train_test_split(
+        X, y, test_size=cfg.test_size, stratify=y, random_state=cfg.random_state
+    )
+
+
+def make_stratified_kfold(cfg: ExperimentConfig = EXPERIMENT):
+    from sklearn.model_selection import StratifiedKFold
+
+    return StratifiedKFold(
+        n_splits=cfg.cv_n_splits,
+        shuffle=cfg.cv_shuffle,
+        random_state=cfg.random_state,
+    )
+
+
+def make_imputer(cfg: ExperimentConfig = EXPERIMENT):
+    from sklearn.impute import SimpleImputer
+
+    return SimpleImputer(strategy=cfg.imputer_strategy)
+
+
+def mda_rng(cfg: ExperimentConfig = EXPERIMENT):
+    return np.random.default_rng(cfg.random_state)
+
+
+def load_combined_xy(csv_path: Path | str | None = None):
+    """Load `combined.csv`-style table; return feature column names, X (float), y."""
+    path = Path(csv_path) if csv_path is not None else DATA_COMBINED_DEFAULT
+    df = pd.read_csv(path)
+    feature_names = df.drop(columns=["target"]).columns.tolist()
+    X = df.drop(columns=["target"]).to_numpy(dtype=float)
+    y = df["target"].to_numpy()
+    return feature_names, X, y
+
+
+def run_permutation_mda(
+    clf, X_test, y_test, feature_names, *, rng=None, n_repeats: int | None = None, cfg: ExperimentConfig = EXPERIMENT
+):
     """MDA via repeated single-feature shuffles on a fixed test set. Returns long DataFrame (feature, mda)."""
     if rng is None:
-        rng = np.random.default_rng()
+        rng = np.random.default_rng(cfg.random_state)
+    if n_repeats is None:
+        n_repeats = cfg.mda_n_repeats
     X_test = np.asarray(X_test, dtype=float)
     base = accuracy_score(y_test, clf.predict(X_test))
     rows = []
@@ -35,14 +97,34 @@ def run_permutation_mda(clf, X_test, y_test, feature_names, *, rng=None, n_repea
 
 
 def run_shap_proba(
-    clf, X_background, X_explain, feature_names, *, class_index=1, max_background=100, random_state=42
+    clf,
+    X_background,
+    X_explain,
+    feature_names,
+    *,
+    class_index: int | None = None,
+    max_background: int | None = None,
+    max_explain: int | None = None,
+    random_state: int | None = None,
+    cfg: ExperimentConfig = EXPERIMENT,
 ):
     """SHAP for sklearn `predict_proba` (tabular). Returns long DataFrame (sample, feature, shap)."""
     import shap
 
+    if class_index is None:
+        class_index = cfg.shap_class_index
+    if max_background is None:
+        max_background = cfg.shap_max_background
+    if max_explain is None:
+        max_explain = cfg.shap_max_explain
+    if random_state is None:
+        random_state = cfg.random_state
+
     X_bg = np.asarray(X_background, dtype=float)
     X_ex = np.asarray(X_explain, dtype=float)
     rng = np.random.default_rng(random_state)
+    if max_explain is not None and X_ex.shape[0] > max_explain:
+        X_ex = X_ex[rng.choice(X_ex.shape[0], max_explain, replace=False)]
     if len(X_bg) > max_background:
         X_bg = X_bg[rng.choice(len(X_bg), max_background, replace=False)]
     explainer = shap.Explainer(clf.predict_proba, X_bg)
