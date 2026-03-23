@@ -1,3 +1,2 @@
-model,accuracy,auc_roc,precision,recall,f1
-simple_net,0.7264344262295082,0.8036487243468962,0.7293688622804017,0.7264344262295082,0.727072398782245
-g
+model,accuracy,auc_roc,precision,recall,f1,run_config_json
+simple_net,0.7151639344262295,0.7974189879648962,0.717334840040277,0.7151639344262295,0.7157425687733564,"{""estimator_kw"": {""activation"": ""tanh"", ""alpha"": 0.023817865551659545, ""hidden_layer_sizes"": [128], ""learning_rate_init"": 0.0010066026970968265, ""max_iter"": 2500}, ""experiment"": {""cv_n_splits"": 5, ""cv_shuffle"": true, ""imputer_strategy"": ""median"", ""mda_n_repeats"": 50, ""optuna_inner_splits"": 3, ""optuna_n_trials"": 24, ""optuna_outer_splits"": 4, ""optuna_show_progress"": true, ""random_state"": 42, ""shap_class_index"": 1, ""shap_max_background"": 100, ""shap_max_explain"": 150, ""test_size"": 0.2}, ""hpo_best_value"": 0.7943305128206309}"

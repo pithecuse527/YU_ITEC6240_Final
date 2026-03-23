@@ -13,6 +13,7 @@ from sklearn.metrics import classification_report, roc_auc_score
 from sklearn.model_selection import StratifiedKFold, train_test_split
 
 from model_run_utils import (
+    build_run_config_json,
     persist_run_artifacts,
     roc_oob_figure,
     run_permutation_mda,
@@ -162,6 +163,24 @@ persist_run_artifacts(
     fig_shap=fig_shap,
     mda_df=mda_df,
     shap_df=shap_df,
+    run_config_json=build_run_config_json(
+        cfg=None,
+        estimator_kw={
+            "learning_rate": float(best["learning_rate"]),
+            "depth": int(best["depth"]),
+            "l2_leaf_reg": float(best["l2_leaf_reg"]),
+            "iterations": 1000,
+            "verbose": 0,
+            "early_stopping_rounds": 50,
+            "cat_features": cat_indices,
+        },
+        optuna_best_value=float(study.best_value),
+        extra={
+            "optuna_trials": 50,
+            "tuning_objective": "accuracy_on_holdout_within_pool",
+            "final_pool_fit": "same_lr_depth_l2_without_early_stopping",
+        },
+    ),
 )
 
 # %%

@@ -38,6 +38,7 @@ def load_combined_metrics(metrics_dir: Path | None = None) -> pd.DataFrame:
         raise ValueError(f"Missing columns {missing} after loading {root}")
 
     out = out.dropna(subset=["model"])
+    # keep="last" also keeps the latest run_config_json when models are re-run
     out = out.drop_duplicates(subset=["model"], keep="last")
     for c in METRIC_COLS:
         out[c] = pd.to_numeric(out[c], errors="coerce")

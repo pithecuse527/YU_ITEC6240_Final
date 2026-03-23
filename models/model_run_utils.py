@@ -1,9 +1,15 @@
-"""Shared helpers for simple_net-style training scripts: MDA, SHAP, ROC figures, CSV + HTML exports."""
+"""Shared helpers for simple_net-style training scripts: MDA, SHAP, ROC figures, CSV + HTML exports.
+
+Also hosts the **single** implementation of stratified OOF CV and pool→holdout refit used by
+``simple_net_*.py`` and ``streamlit_dashboard.py`` (``pool_cv_oof_predictions``,
+``fit_simple_net_on_pool_for_holdout``, ``make_simple_net_classifier``).
+"""
 
 from __future__ import annotations
 
+import json
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 import numpy as np
@@ -30,6 +36,11 @@ class ExperimentConfig:
     shap_max_background: int = 100
     shap_max_explain: int = 150
     shap_class_index: int = 1
+    # Optuna: nested CV on train pool only (scripts must not pass holdout). See optuna_hpo.py.
+    optuna_n_trials: int = 24
+    optuna_show_progress: bool = True
+    optuna_outer_splits: int = 4
+    optuna_inner_splits: int = 3
 
 
 EXPERIMENT = ExperimentConfig()
@@ -57,6 +68,129 @@ def make_imputer(cfg: ExperimentConfig = EXPERIMENT):
     from sklearn.impute import SimpleImputer
 
     return SimpleImputer(strategy=cfg.imputer_strategy)
+
+
+# --- Shared by ``simple_net_*.py`` and ``streamlit_dashboard.py`` (one implementation) ---
+
+SIMPLE_NET_MODEL_KINDS = frozenset(
+    {"mlp", "knn", "logistic", "rf", "catboost", "svm", "xgboost"}
+)
+
+
+def simple_net_scale_after_impute(model_kind: str) -> bool:
+    """KNN and SVM use ``StandardScaler`` after imputation, matching the scripts."""
+    return model_kind in {"knn", "svm"}
+
+
+def make_simple_net_classifier(model_kind: str, est_kw: dict, cfg: ExperimentConfig):
+    """Build the fitted estimator class used in ``simple_net_<kind>.py`` (same kwargs + RNG)."""
+    rs = cfg.random_state
+    if model_kind == "mlp":
+        from sklearn.neural_network import MLPClassifier
+
+        return MLPClassifier(**est_kw, random_state=rs)
+    if model_kind == "knn":
+        from sklearn.neighbors import KNeighborsClassifier
+
+        return KNeighborsClassifier(**est_kw)
+    if model_kind == "logistic":
+        from sklearn.linear_model import LogisticRegression
+
+        return LogisticRegression(**est_kw, random_state=rs)
+    if model_kind == "rf":
+        from sklearn.ensemble import RandomForestClassifier
+
+        return RandomForestClassifier(**est_kw, random_state=rs)
+    if model_kind == "catboost":
+        from catboost import CatBoostClassifier
+
+        return CatBoostClassifier(**est_kw, random_seed=rs)
+    if model_kind == "svm":
+        from sklearn.svm import SVC
+
+        return SVC(**est_kw, random_state=rs)
+    if model_kind == "xgboost":
+        from xgboost import XGBClassifier
+
+        return XGBClassifier(**est_kw, random_state=rs)
+    raise ValueError(f"Unknown simple_net model_kind={model_kind!r}")
+
+
+def pool_cv_oof_predictions(
+    model_kind: str,
+    X_pool: np.ndarray,
+    y_pool: np.ndarray,
+    cfg: ExperimentConfig,
+    est_kw: dict,
+) -> tuple[list, list, list]:
+    """Stratified OOF CV on the train pool: imputer per fold, optional scaler, then ``est_kw`` classifier.
+
+    Matches the manual loops in ``simple_net_*.py`` (including CatBoost ``predict`` dtype).
+    """
+    skf = make_stratified_kfold(cfg)
+    y_true: list = []
+    y_pred: list = []
+    y_score: list = []
+    scale = simple_net_scale_after_impute(model_kind)
+    for tr_idx, va_idx in skf.split(X_pool, y_pool):
+        imp = make_imputer(cfg)
+        X_tr = imp.fit_transform(X_pool[tr_idx])
+        X_va = imp.transform(X_pool[va_idx])
+        y_tr, y_va = y_pool[tr_idx], y_pool[va_idx]
+        if scale:
+            from sklearn.preprocessing import StandardScaler
+
+            sc = StandardScaler()
+            X_tr = sc.fit_transform(X_tr)
+            X_va = sc.transform(X_va)
+        clf = make_simple_net_classifier(model_kind, est_kw, cfg)
+        clf.fit(X_tr, y_tr)
+        y_true.extend(y_va)
+        pred = clf.predict(X_va)
+        if model_kind == "catboost":
+            pred = pred.astype(int).ravel()
+        y_pred.extend(pred)
+        y_score.extend(clf.predict_proba(X_va)[:, 1])
+    return y_true, y_pred, y_score
+
+
+def fit_simple_net_on_pool_for_holdout(
+    model_kind: str,
+    X_pool: np.ndarray,
+    X_holdout: np.ndarray,
+    y_pool: np.ndarray,
+    cfg: ExperimentConfig,
+    est_kw: dict,
+):
+    """Impute (+ scale if needed), fit on full pool, return classifier and transformed matrices.
+
+    Same preprocessing as the ``imp_final`` / ``clf_final.fit`` blocks in ``simple_net_*.py``.
+    """
+    imp = make_imputer(cfg)
+    X_pi = imp.fit_transform(X_pool)
+    X_hi = imp.transform(X_holdout)
+    if simple_net_scale_after_impute(model_kind):
+        from sklearn.preprocessing import StandardScaler
+
+        sc = StandardScaler()
+        X_pi = sc.fit_transform(X_pi)
+        X_hi = sc.transform(X_hi)
+    clf = make_simple_net_classifier(model_kind, est_kw, cfg)
+    clf.fit(X_pi, y_pool)
+    return clf, X_pi, X_hi
+
+
+def oof_scalar_metrics(y_true, y_pred, y_score) -> dict[str, float]:
+    """Accuracy, AUC-ROC, weighted precision/recall/F1 — same construction as ``write_performance_metrics_csv``."""
+    rep = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
+    w = rep["weighted avg"]
+    return {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "auc_roc": float(roc_auc_score(y_true, y_score)),
+        "precision": float(w["precision"]),
+        "recall": float(w["recall"]),
+        "f1": float(w["f1-score"]),
+    }
 
 
 def mda_rng(cfg: ExperimentConfig = EXPERIMENT):
@@ -152,6 +286,26 @@ def roc_oob_figure(y_true, y_score, *, title_prefix: str):
     return fig, auc
 
 
+def build_run_config_json(
+    *,
+    cfg: ExperimentConfig | None = None,
+    estimator_kw: dict | None = None,
+    optuna_best_value: float | None = None,
+    extra: dict | None = None,
+) -> str:
+    """JSON blob for the `run_config_json` metrics column (experiment + HPO + estimator kwargs)."""
+    payload: dict = {}
+    if cfg is not None:
+        payload["experiment"] = asdict(cfg)
+    if estimator_kw is not None:
+        payload["estimator_kw"] = estimator_kw
+    if optuna_best_value is not None:
+        payload["hpo_best_value"] = optuna_best_value
+    if extra:
+        payload["extra"] = extra
+    return json.dumps(payload, sort_keys=True, default=str)
+
+
 def write_performance_metrics_csv(
     csv_path: Path,
     *,
@@ -159,8 +313,12 @@ def write_performance_metrics_csv(
     y_true,
     y_pred,
     y_score,
+    run_config_json: str | None = None,
 ) -> None:
-    """One row: accuracy, AUC-ROC, precision/recall/F1 (weighted average over classes)."""
+    """One row: accuracy, AUC-ROC, precision/recall/F1 (weighted average over classes).
+
+    If ``run_config_json`` is set, it is stored in the last column for reproducibility.
+    """
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     rep = classification_report(y_true, y_pred, output_dict=True, zero_division=0)
     w = rep["weighted avg"]
@@ -172,6 +330,8 @@ def write_performance_metrics_csv(
         "recall": w["recall"],
         "f1": w["f1-score"],
     }
+    if run_config_json is not None:
+        row["run_config_json"] = run_config_json
     pd.DataFrame([row]).to_csv(csv_path, index=False)
 
 
@@ -187,6 +347,7 @@ def persist_run_artifacts(
     mda_df: pd.DataFrame,
     shap_df: pd.DataFrame,
     show_plots: bool | None = None,
+    run_config_json: str | None = None,
 ) -> Path:
     """
     Writes:
@@ -205,6 +366,7 @@ def persist_run_artifacts(
         y_true=y_true,
         y_pred=y_pred,
         y_score=y_score,
+        run_config_json=run_config_json,
     )
     mda_df.to_csv(out_dir / "mda_long.csv", index=False)
     shap_df.to_csv(out_dir / "shap_long.csv", index=False)
