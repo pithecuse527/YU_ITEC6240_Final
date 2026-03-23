@@ -43,6 +43,9 @@ def to_canonical(df: pd.DataFrame, source: str) -> pd.DataFrame:
 
     if source == "heart_csv":
         df = df.rename(columns=HEART_CSV_RENAME)
+
+        df["chest pain type"] = df["chest pain type"] + 1
+        
         extra = [c for c in df.columns if c not in CANONICAL_COLS and c not in ("ca", "thal")]
         # drop UCI-only columns not in canonical schema
         drop_cols = [c for c in df.columns if c not in CANONICAL_COLS]
