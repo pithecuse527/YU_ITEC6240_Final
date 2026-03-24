@@ -698,40 +698,129 @@ def main() -> None:
             rows = []
             for k, r in results.items():
                 m = r["metrics"]
+                run_short = k if len(k) <= 28 else f"…{k[-24:]}"
                 rows.append(
                     {
+                        "Model": r["label"],
+                        "Run": run_short,
                         "run_key": k,
-                        "model": r["label"],
-                        "AUC-ROC": m["auc_roc"],
                         "Accuracy": m["accuracy"],
-                        "F1 (weighted)": m["f1"],
                         "Precision": m["precision"],
                         "Recall": m["recall"],
-                        "Optuna nested CV AUC": r["study_best_value"],
+                        "AUC-ROC": m["auc_roc"],
+                        "F1 (weighted)": m["f1"],
+                        "Nested-CV AUC (Optuna)": r["study_best_value"],
                         "Time (s)": round(r["elapsed_sec"], 1),
                         "MDA": "✓" if (r.get("has_mda") or r.get("mda_fig") is not None) else "—",
                         "SHAP": "✓" if (r.get("has_shap") or r.get("shap_fig") is not None) else "—",
                     }
                 )
             df = pd.DataFrame(rows).sort_values("AUC-ROC", ascending=False)
+            df_compare = df[
+                [
+                    "Model",
+                    "Run",
+                    "Accuracy",
+                    "Precision",
+                    "Recall",
+                    "AUC-ROC",
+                    "F1 (weighted)",
+                ]
+            ].copy()
+
+            st.caption(
+                "All values below are **out-of-fold** on the **train pool** (stratified CV with tuned hyperparameters) — same as the scripts."
+            )
             with st.container(border=True):
-                st.dataframe(df, use_container_width=True, hide_index=True)
+                st.markdown("**Classification metrics — compare runs**")
+                st.dataframe(
+                    df_compare,
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Model": st.column_config.TextColumn("Model", width="medium"),
+                        "Run": st.column_config.TextColumn("Run id", width="small", help="Session run key (truncated)"),
+                        "Accuracy": st.column_config.NumberColumn("Accuracy", format="%.4f", width="small"),
+                        "Precision": st.column_config.NumberColumn("Precision", format="%.4f", width="small"),
+                        "Recall": st.column_config.NumberColumn("Recall", format="%.4f", width="small"),
+                        "AUC-ROC": st.column_config.NumberColumn("AUC-ROC", format="%.4f", width="small"),
+                        "F1 (weighted)": st.column_config.NumberColumn("F1 (w)", format="%.4f", width="small"),
+                    },
+                )
+
+            with st.expander("Full leaderboard row (HPO score, timing, interpretability flags)"):
+                df_full = df[
+                    [
+                        "Model",
+                        "Run",
+                        "Nested-CV AUC (Optuna)",
+                        "Time (s)",
+                        "MDA",
+                        "SHAP",
+                        "run_key",
+                    ]
+                ]
+                st.dataframe(
+                    df_full.drop(columns=["run_key"]),
+                    use_container_width=True,
+                    hide_index=True,
+                    column_config={
+                        "Nested-CV AUC (Optuna)": st.column_config.NumberColumn(
+                            "Nested-CV AUC (Optuna)", format="%.4f"
+                        ),
+                        "Time (s)": st.column_config.NumberColumn("Time (s)", format="%.1f"),
+                    },
+                )
+                st.caption("Use **Run** labels above to match rows; full keys available in Model lab.")
+
             _section_header(
-                "Segment B · Distribution",
-                "AUC at a glance",
-                "Grouped bars by model name for this session (multiple runs of the same family appear as separate x positions).",
+                "Segment B · Metric comparison (charts)",
+                "Side-by-side OOF scores",
+                "Each bar group is one session run; metrics are comparable on the same 0–1 scale.",
                 rail="teal",
             )
+            metric_cols = ["Accuracy", "Precision", "Recall", "AUC-ROC", "F1 (weighted)"]
+            df_long = df.melt(
+                id_vars=["Model", "Run"],
+                value_vars=metric_cols,
+                var_name="Metric",
+                value_name="Score",
+            )
+            df_long["Label"] = df_long["Model"] + " · " + df_long["Run"]
+            fig_group = px.bar(
+                df_long,
+                x="Label",
+                y="Score",
+                color="Metric",
+                barmode="group",
+                title="OOF metrics by run (this session)",
+                category_orders={"Metric": metric_cols},
+            )
+            fig_group.update_layout(
+                xaxis_tickangle=-35,
+                legend_title_text="Metric",
+                yaxis_range=[0, 1],
+            )
+            _apply_chart_theme(fig_group)
+            st.plotly_chart(fig_group, use_container_width=True)
+
+            _section_header(
+                "Segment C · AUC ranking",
+                "AUC-ROC only",
+                "Quick ranking by out-of-fold AUC-ROC on the pool.",
+                rail="default",
+            )
+            df_auc = df.assign(Label=df["Model"] + " · " + df["Run"])
             fig = px.bar(
-                df,
-                x="model",
+                df_auc,
+                x="Label",
                 y="AUC-ROC",
-                color="model",
-                title="OOF AUC-ROC (this session)",
+                color="Model",
+                title="OOF AUC-ROC by run",
                 text_auto=".3f",
                 color_discrete_sequence=px.colors.qualitative.Bold,
             )
-            fig.update_layout(showlegend=False, yaxis_range=[0, 1])
+            fig.update_layout(showlegend=True, yaxis_range=[0, 1], xaxis_tickangle=-35)
             _apply_chart_theme(fig)
             st.plotly_chart(fig, use_container_width=True)
 
