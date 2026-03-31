@@ -60,102 +60,113 @@ logging.getLogger("optuna_hpo").setLevel(logging.WARNING)
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
 
+def _is_light_theme() -> bool:
+    """Check session state for the user's theme choice."""
+    return st.session_state.get("_light_mode", False)
+
+
 def _inject_css() -> None:
+    light = _is_light_theme()
     st.markdown(
-        """
+        f"""
         <style>
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;600&display=swap');
-        :root {
-            --bg-deep: #0b0f19;
-            --bg-card: rgba(22, 28, 45, 0.72);
-            --border: rgba(129, 140, 248, 0.22);
-            --accent: #818cf8;
-            --accent-2: #34d399;
-            --accent-3: #f472b6;
-            --text: #f1f5f9;
-            --muted: #94a3b8;
-        }
-        .stApp {
-            background: radial-gradient(1200px 600px at 10% -10%, rgba(99,102,241,0.18), transparent 55%),
-                        radial-gradient(900px 500px at 100% 0%, rgba(52,211,153,0.12), transparent 50%),
-                        radial-gradient(800px 400px at 50% 100%, rgba(244,114,182,0.08), transparent 45%),
-                        linear-gradient(180deg, #0b0f19 0%, #111827 100%) !important;
-        }
-        html, body, [class*="css"] {
+        :root {{
+            --bg-deep: {'#f8fafc' if light else '#0b0f19'};
+            --bg-card: {'rgba(255, 255, 255, 0.82)' if light else 'rgba(22, 28, 45, 0.72)'};
+            --border: {'rgba(99, 102, 241, 0.18)' if light else 'rgba(129, 140, 248, 0.22)'};
+            --accent: {'#6366f1' if light else '#818cf8'};
+            --accent-2: {'#059669' if light else '#34d399'};
+            --accent-3: {'#ec4899' if light else '#f472b6'};
+            --text: {'#1e293b' if light else '#f1f5f9'};
+            --muted: {'#64748b' if light else '#94a3b8'};
+        }}
+        .stApp {{
+            background: {'radial-gradient(1200px 600px at 10% -10%, rgba(99,102,241,0.07), transparent 55%),'
+                         'radial-gradient(900px 500px at 100% 0%, rgba(52,211,153,0.05), transparent 50%),'
+                         'radial-gradient(800px 400px at 50% 100%, rgba(244,114,182,0.04), transparent 45%),'
+                         'linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%)'
+                         if light else
+                         'radial-gradient(1200px 600px at 10% -10%, rgba(99,102,241,0.18), transparent 55%),'
+                         'radial-gradient(900px 500px at 100% 0%, rgba(52,211,153,0.12), transparent 50%),'
+                         'radial-gradient(800px 400px at 50% 100%, rgba(244,114,182,0.08), transparent 45%),'
+                         'linear-gradient(180deg, #0b0f19 0%, #111827 100%)'} !important;
+        }}
+        html, body, [class*="css"] {{
             font-family: 'DM Sans', system-ui, sans-serif;
-        }
-        code, pre, .stCodeBlock {
+        }}
+        code, pre, .stCodeBlock {{
             font-family: 'JetBrains Mono', monospace !important;
-        }
-        [data-testid="stSidebar"] {
-            background: linear-gradient(175deg, rgba(17,24,39,0.97) 0%, rgba(15,23,42,0.98) 100%) !important;
+        }}
+        [data-testid="stSidebar"] {{
+            background: {'linear-gradient(175deg, rgba(248,250,252,0.97) 0%, rgba(241,245,249,0.98) 100%)' if light else 'linear-gradient(175deg, rgba(17,24,39,0.97) 0%, rgba(15,23,42,0.98) 100%)'} !important;
             border-right: 1px solid var(--border) !important;
-        }
-        [data-testid="stSidebar"] .block-container { padding-top: 1.5rem; }
-        .sb-seg {
+        }}
+        [data-testid="stSidebar"] .block-container {{ padding-top: 1.5rem; }}
+        .sb-seg {{
             margin: 1.15rem 0 0.65rem 0;
             padding: 0.35rem 0 0.4rem 0;
-            border-bottom: 1px solid rgba(129,140,248,0.15);
-        }
-        .sb-seg-title {
+            border-bottom: 1px solid {'rgba(99,102,241,0.12)' if light else 'rgba(129,140,248,0.15)'};
+        }}
+        .sb-seg-title {{
             font-size: 0.68rem;
             font-weight: 700;
             letter-spacing: 0.14em;
             text-transform: uppercase;
-            color: #a5b4fc;
+            color: {'#6366f1' if light else '#a5b4fc'};
             margin: 0;
-        }
-        .sb-seg-sub {
+        }}
+        .sb-seg-sub {{
             font-size: 0.72rem;
             color: var(--muted);
             margin: 0.2rem 0 0 0;
             line-height: 1.35;
-        }
-        .lab-hero {
+        }}
+        .lab-hero {{
             position: relative;
             overflow: hidden;
-            background: linear-gradient(125deg, rgba(30,27,75,0.95) 0%, rgba(15,23,42,0.92) 45%, rgba(17,94,89,0.35) 100%);
+            background: {'linear-gradient(125deg, rgba(238,242,255,0.95) 0%, rgba(248,250,252,0.92) 45%, rgba(204,251,241,0.35) 100%)' if light else 'linear-gradient(125deg, rgba(30,27,75,0.95) 0%, rgba(15,23,42,0.92) 45%, rgba(17,94,89,0.35) 100%)'};
             color: var(--text);
             padding: 1.85rem 1.75rem 1.6rem 1.75rem;
             border-radius: 20px;
             margin-bottom: 1.5rem;
             border: 1px solid var(--border);
-            box-shadow: 0 24px 48px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06);
-        }
-        .lab-hero::before {
+            box-shadow: {'0 24px 48px rgba(0,0,0,0.06), inset 0 1px 0 rgba(255,255,255,0.8)' if light else '0 24px 48px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.06)'};
+        }}
+        .lab-hero::before {{
             content: "";
             position: absolute;
             top: -40%; right: -10%;
             width: 55%; height: 140%;
-            background: radial-gradient(circle, rgba(129,140,248,0.25) 0%, transparent 65%);
+            background: radial-gradient(circle, {'rgba(99,102,241,0.1)' if light else 'rgba(129,140,248,0.25)'} 0%, transparent 65%);
             pointer-events: none;
-        }
-        .lab-hero-inner { position: relative; z-index: 1; }
-        .lab-hero h1 {
+        }}
+        .lab-hero-inner {{ position: relative; z-index: 1; }}
+        .lab-hero h1 {{
             margin: 0;
             font-weight: 700;
             letter-spacing: -0.035em;
             font-size: clamp(1.45rem, 3vw, 2rem);
-            background: linear-gradient(90deg, #fff 0%, #c7d2fe 50%, #99f6e4 100%);
+            background: {'linear-gradient(90deg, #312e81 0%, #4f46e5 50%, #0d9488 100%)' if light else 'linear-gradient(90deg, #fff 0%, #c7d2fe 50%, #99f6e4 100%)'};
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-        }
-        .lab-hero p {
+        }}
+        .lab-hero p {{
             margin: 0.65rem 0 0 0;
             opacity: 0.9;
             font-size: 0.98rem;
             line-height: 1.55;
-            color: #cbd5e1;
+            color: {'#475569' if light else '#cbd5e1'};
             max-width: 52rem;
-        }
-        .hero-chips {
+        }}
+        .hero-chips {{
             display: flex;
             flex-wrap: wrap;
             gap: 0.5rem;
             margin-top: 1.1rem;
-        }
-        .hero-chip {
+        }}
+        .hero-chip {{
             display: inline-flex;
             align-items: center;
             gap: 0.35rem;
@@ -164,97 +175,97 @@ def _inject_css() -> None:
             font-size: 0.78rem;
             font-weight: 600;
             font-family: 'JetBrains Mono', monospace;
-            background: rgba(15,23,42,0.55);
-            border: 1px solid rgba(129,140,248,0.25);
-            color: #e2e8f0;
-        }
-        .hero-chip em { font-style: normal; color: #a5b4fc; }
-        .section-wrap {
+            background: {'rgba(241,245,249,0.7)' if light else 'rgba(15,23,42,0.55)'};
+            border: 1px solid {'rgba(99,102,241,0.2)' if light else 'rgba(129,140,248,0.25)'};
+            color: {'#334155' if light else '#e2e8f0'};
+        }}
+        .hero-chip em {{ font-style: normal; color: {'#6366f1' if light else '#a5b4fc'}; }}
+        .section-wrap {{
             display: flex;
             gap: 1rem;
             align-items: flex-start;
             margin: 1.75rem 0 0.85rem 0;
             padding-bottom: 0.5rem;
-        }
-        .section-rail {
+        }}
+        .section-rail {{
             width: 4px;
             min-height: 2.5rem;
             border-radius: 4px;
             background: linear-gradient(180deg, var(--accent) 0%, var(--accent-2) 100%);
             flex-shrink: 0;
             margin-top: 0.2rem;
-        }
-        .section-rail.pink { background: linear-gradient(180deg, var(--accent-3) 0%, var(--accent) 100%); }
-        .section-rail.teal { background: linear-gradient(180deg, var(--accent-2) 0%, #2dd4bf 100%); }
-        .section-badge {
+        }}
+        .section-rail.pink {{ background: linear-gradient(180deg, var(--accent-3) 0%, var(--accent) 100%); }}
+        .section-rail.teal {{ background: linear-gradient(180deg, var(--accent-2) 0%, #2dd4bf 100%); }}
+        .section-badge {{
             display: inline-block;
             font-size: 0.65rem;
             font-weight: 700;
             letter-spacing: 0.12em;
             text-transform: uppercase;
-            color: #a5b4fc;
+            color: {'#6366f1' if light else '#a5b4fc'};
             margin-bottom: 0.25rem;
             font-family: 'JetBrains Mono', monospace;
-        }
-        .section-h2 {
+        }}
+        .section-h2 {{
             margin: 0;
             font-size: 1.2rem;
             font-weight: 700;
-            color: #f8fafc;
+            color: {'#1e293b' if light else '#f8fafc'};
             letter-spacing: -0.02em;
-        }
-        .section-p {
+        }}
+        .section-p {{
             margin: 0.35rem 0 0 0;
             font-size: 0.88rem;
             color: var(--muted);
             line-height: 1.5;
             max-width: 48rem;
-        }
-        .panel {
+        }}
+        .panel {{
             background: var(--bg-card);
             border: 1px solid var(--border);
             border-radius: 16px;
             padding: 1rem 1.15rem;
             margin-bottom: 1rem;
             backdrop-filter: blur(12px);
-        }
-        .step-pill {
+        }}
+        .step-pill {{
             display: inline-block;
-            background: rgba(99, 102, 241, 0.22);
-            color: #c7d2fe;
+            background: {'rgba(99, 102, 241, 0.1)' if light else 'rgba(99, 102, 241, 0.22)'};
+            color: {'#4f46e5' if light else '#c7d2fe'};
             padding: 0.2rem 0.65rem;
             border-radius: 999px;
             font-size: 0.72rem;
             font-weight: 600;
             margin-right: 0.35rem;
             font-family: 'JetBrains Mono', monospace;
-        }
-        div[data-testid="stMetricValue"] {
+        }}
+        div[data-testid="stMetricValue"] {{
             font-variant-numeric: tabular-nums;
-            color: #f8fafc !important;
-        }
-        div[data-testid="stMetricLabel"] { color: #94a3b8 !important; }
-        .stTabs [data-baseweb="tab-list"] {
+            color: {'#1e293b' if light else '#f8fafc'} !important;
+        }}
+        div[data-testid="stMetricLabel"] {{ color: {'#64748b' if light else '#94a3b8'} !important; }}
+        .stTabs [data-baseweb="tab-list"] {{
             gap: 6px;
-            background: rgba(15,23,42,0.5);
+            background: {'rgba(241,245,249,0.6)' if light else 'rgba(15,23,42,0.5)'};
             padding: 6px;
             border-radius: 14px;
             border: 1px solid var(--border);
-        }
-        .stTabs [data-baseweb="tab"] {
+        }}
+        .stTabs [data-baseweb="tab"] {{
             border-radius: 10px !important;
             padding: 0.55rem 1.1rem !important;
             font-weight: 600 !important;
-        }
-        .stTabs [aria-selected="true"] {
-            background: linear-gradient(135deg, rgba(99,102,241,0.45) 0%, rgba(45,212,191,0.2) 100%) !important;
-            border: 1px solid rgba(129,140,248,0.4) !important;
-        }
-        div[data-testid="stExpander"] details {
-            background: rgba(15,23,42,0.4);
-            border: 1px solid rgba(129,140,248,0.15);
+        }}
+        .stTabs [aria-selected="true"] {{
+            background: {'linear-gradient(135deg, rgba(99,102,241,0.15) 0%, rgba(45,212,191,0.08) 100%)' if light else 'linear-gradient(135deg, rgba(99,102,241,0.45) 0%, rgba(45,212,191,0.2) 100%)'} !important;
+            border: 1px solid {'rgba(99,102,241,0.3)' if light else 'rgba(129,140,248,0.4)'} !important;
+        }}
+        div[data-testid="stExpander"] details {{
+            background: {'rgba(248,250,252,0.6)' if light else 'rgba(15,23,42,0.4)'};
+            border: 1px solid {'rgba(99,102,241,0.12)' if light else 'rgba(129,140,248,0.15)'};
             border-radius: 12px;
-        }
+        }}
         </style>
         """,
         unsafe_allow_html=True,
@@ -285,11 +296,12 @@ def _sidebar_segment(title: str, subtitle: str = "") -> None:
 
 
 def _apply_chart_theme(fig) -> None:
+    light = _is_light_theme()
     fig.update_layout(
-        template="plotly_dark",
-        paper_bgcolor="rgba(17, 24, 39, 0.88)",
-        plot_bgcolor="rgba(15, 23, 42, 0.55)",
-        font=dict(family="DM Sans, sans-serif", color="#e2e8f0", size=12),
+        template="plotly_white" if light else "plotly_dark",
+        paper_bgcolor="rgba(255, 255, 255, 0.88)" if light else "rgba(17, 24, 39, 0.88)",
+        plot_bgcolor="rgba(248, 250, 252, 0.55)" if light else "rgba(15, 23, 42, 0.55)",
+        font=dict(family="DM Sans, sans-serif", color="#334155" if light else "#e2e8f0", size=12),
         title_font=dict(size=15),
         margin=dict(l=48, r=24, t=56, b=48),
     )
@@ -556,8 +568,6 @@ def main() -> None:
         initial_sidebar_state="expanded",
         page_icon="◈",
     )
-    _inject_css()
-
     st.session_state.setdefault("results", {})
     n_session_runs = len(st.session_state["results"])
 
@@ -579,9 +589,15 @@ def main() -> None:
     )
 
     with st.sidebar:
+        light = st.toggle("Light mode", value=False, key="_light_mode")
+
+    # Inject CSS after the toggle so the theme choice is known
+    _inject_css()
+
+    with st.sidebar:
         st.markdown(
-            '<p style="font-size:1.05rem;font-weight:700;color:#e2e8f0;margin:0 0 0.25rem 0;">Control deck</p>'
-            '<p style="font-size:0.78rem;color:#94a3b8;margin:0 0 0.5rem 0;line-height:1.4;">Configure, then launch training.</p>',
+            f'<p style="font-size:1.05rem;font-weight:700;color:{"#1e293b" if light else "#e2e8f0"};margin:0 0 0.25rem 0;">Control deck</p>'
+            f'<p style="font-size:0.78rem;color:{"#64748b" if light else "#94a3b8"};margin:0 0 0.5rem 0;line-height:1.4;">Configure, then launch training.</p>',
             unsafe_allow_html=True,
         )
         _sidebar_segment("01 · Data source", "Path or upload; must include a target column.")
