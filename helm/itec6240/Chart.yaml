@@ -1,0 +1,6 @@
+apiVersion: v2
+name: itec6240
+description: ITEC6240 ML Dashboard - Streamlit heart disease prediction app
+type: application
+version: 0.1.0
+appVersion: "0.1"

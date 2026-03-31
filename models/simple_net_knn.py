@@ -1,55 +1,38 @@
 # %%
-# KNN classifier — same protocol as simple_net.py (holdout, CV, median impute, MDA, SHAP).
-# Uses KNeighborsClassifier. After imputation, StandardScaler is fit on train only (needed for distances).
-
+# KNN: same experiment config + Optuna; StandardScaler after imputation.
 # %%
 from pathlib import Path
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
-from sklearn.impute import SimpleImputer
 from sklearn.metrics import classification_report, roc_auc_score
-from sklearn.model_selection import StratifiedKFold, train_test_split
-from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import StandardScaler
 
 from model_run_utils import (
+    EXPERIMENT,
+    build_run_config_json,
+    fit_simple_net_on_pool_for_holdout,
+    load_combined_xy,
     persist_run_artifacts,
+    pool_cv_oof_predictions,
     roc_oob_figure,
     run_permutation_mda,
     run_shap_proba,
+    split_pool_holdout,
 )
+from optuna_hpo import get_simple_net_tune_fn
 
 SCRIPT_STEM = Path(__file__).stem
+MODEL_KIND = "knn"
 
 # %%
-df = pd.read_csv("/home/syntheticdemon/ml/data/combined.csv")
-feature_names = df.drop(columns=["target"]).columns.tolist()
-X = df.drop(columns=["target"]).to_numpy(dtype=float)
-y = df["target"].to_numpy()
+feature_names, X, y = load_combined_xy()
+X_pool, X_holdout, y_pool, y_holdout = split_pool_holdout(X, y)
 
-X_pool, X_holdout, y_pool, y_holdout = train_test_split(
-    X, y, test_size=0.2, stratify=y, random_state=42
-)
+study, est_kw = get_simple_net_tune_fn(MODEL_KIND)(X_pool, y_pool, EXPERIMENT)
+print("Optuna — mean CV ROC-AUC (train pool):", round(study.best_value, 4))
+print("Best hyperparameters:", est_kw)
 
-skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-y_true, y_pred, y_score = [], [], []
-
-for tr_idx, va_idx in skf.split(X_pool, y_pool):
-    imp = SimpleImputer(strategy="median")
-    X_tr = imp.fit_transform(X_pool[tr_idx])
-    X_va = imp.transform(X_pool[va_idx])
-    y_tr, y_va = y_pool[tr_idx], y_pool[va_idx]
-    scaler = StandardScaler()
-    X_tr = scaler.fit_transform(X_tr)
-    X_va = scaler.transform(X_va)
-
-    clf = KNeighborsClassifier(n_neighbors=11, weights="distance", n_jobs=-1)
-    clf.fit(X_tr, y_tr)
-    y_true.extend(y_va)
-    y_pred.extend(clf.predict(X_va))
-    y_score.extend(clf.predict_proba(X_va)[:, 1])
+y_true, y_pred, y_score = pool_cv_oof_predictions(MODEL_KIND, X_pool, y_pool, EXPERIMENT, est_kw)
 
 # %%
 print("Metrics: stratified CV on train pool (holdout test unused here)")
@@ -57,42 +40,37 @@ print(classification_report(y_true, y_pred))
 print("AUC-ROC (OOF on train pool):", round(roc_auc_score(y_true, y_score), 4))
 
 # %%
-roc_fig, _auc = roc_oob_figure(y_true, y_score, title_prefix="ROC — CV on train pool, KNN")
+roc_fig, _ = roc_oob_figure(y_true, y_score, title_prefix="ROC — CV on train pool, KNN")
+roc_fig
 
 # %%
-imp_final = SimpleImputer(strategy="median")
-X_pool_i = imp_final.fit_transform(X_pool)
-X_hold_i = imp_final.transform(X_holdout)
-scaler_final = StandardScaler()
-X_pool_i = scaler_final.fit_transform(X_pool_i)
-X_hold_i = scaler_final.transform(X_hold_i)
-clf_final = KNeighborsClassifier(n_neighbors=11, weights="distance", n_jobs=-1)
-clf_final.fit(X_pool_i, y_pool)
-
-mda_df = run_permutation_mda(
-    clf_final, X_hold_i, y_holdout, feature_names, rng=np.random.default_rng(42), n_repeats=50
+clf_final, X_pool_i, X_hold_i = fit_simple_net_on_pool_for_holdout(
+    MODEL_KIND, X_pool, X_holdout, y_pool, EXPERIMENT, est_kw
 )
+
+mda_df = run_permutation_mda(clf_final, X_hold_i, y_holdout, feature_names)
 fig_mda = px.violin(
     mda_df,
     x="feature",
     y="mda",
     box=True,
     points="all",
-    title="MDA on held-out test — KNN (50 shuffle reps / feature)",
+    title=f"MDA on held-out test — KNN ({EXPERIMENT.mda_n_repeats} shuffle reps / feature)",
 )
 fig_mda.update_xaxes(tickangle=-45)
 
 # %%
-shap_df = run_shap_proba(
-    clf_final, X_pool_i, X_hold_i, feature_names, class_index=1, max_background=100, random_state=42
-)
+shap_df = run_shap_proba(clf_final, X_pool_i, X_hold_i, feature_names)
 fig_shap = px.violin(
     shap_df,
     x="feature",
     y="shap",
     box=True,
     points=False,
-    title="SHAP for P(class=1) on holdout — KNN (background from train pool)",
+    title=(
+        f"SHAP for P(class=1) — KNN (up to {EXPERIMENT.shap_max_explain} holdout rows; "
+        "background from train pool)"
+    ),
 )
 fig_shap.update_xaxes(tickangle=-45)
 
@@ -107,6 +85,11 @@ persist_run_artifacts(
     fig_shap=fig_shap,
     mda_df=mda_df,
     shap_df=shap_df,
+    run_config_json=build_run_config_json(
+        cfg=EXPERIMENT,
+        estimator_kw=est_kw,
+        optuna_best_value=float(study.best_value),
+    ),
 )
 
 # %%
